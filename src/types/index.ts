@@ -141,6 +141,9 @@ export interface AnatomicalLayers {
   showArrows: boolean;
   clippingPlane: boolean;
   clippingHeight: number;
+  sliceAxis?: 'axial' | 'coronal' | 'sagittal';
+  sliceOffset?: number;
+  explodedRatio?: number;
   animationHeart: boolean;
   animationBreathing: boolean;
   animationBloodFlow: boolean;

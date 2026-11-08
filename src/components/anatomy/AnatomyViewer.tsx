@@ -449,13 +449,26 @@ function WebGLOrganMarker({
   );
 }
 
-// Individual GLB Organ Component with Stabilized Raycasting
+const EXPLODED_OFFSETS: Record<OrganKey, [number, number, number]> = {
+  heart: [0.0, 0.08, 0.52],
+  brain: [0.0, 0.42, 0.06],
+  lungs: [-0.42, 0.04, 0.30],
+  liver: [-0.36, -0.06, 0.42],
+  stomach: [0.34, -0.05, 0.40],
+  kidneys: [0.0, -0.06, -0.38],
+  pancreas: [0.0, -0.05, 0.56],
+  intestines: [0.0, -0.32, 0.46],
+};
+
+// Individual GLB Organ Component with PBR Physical Biological Shading & Exploded Lerp
 function OrganModel({
   organKey,
   isSelected,
   isHighlighted,
   severity,
   isDimmed = false,
+  explodedRatio = 0,
+  clippingPlane = null,
   onSelect,
   onHover,
 }: {
@@ -464,6 +477,8 @@ function OrganModel({
   isHighlighted: boolean;
   severity?: 'high' | 'low';
   isDimmed?: boolean;
+  explodedRatio?: number;
+  clippingPlane?: THREE.Plane | null;
   onSelect: (key: OrganKey) => void;
   onHover: (key: OrganKey | null) => void;
 }) {
@@ -473,24 +488,29 @@ function OrganModel({
 
   const { scene } = useGLTF(`/models/${organKey}.glb`);
 
-  // Clone scene and create materials once on mount
+  // Clone scene and apply premium MeshPhysicalMaterial for wet, realistic biological tissue
   const { clonedScene, materials } = useMemo(() => {
     const clone = scene.clone(true);
-    const mats: THREE.MeshStandardMaterial[] = [];
+    const mats: THREE.MeshPhysicalMaterial[] = [];
     clone.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         if (mesh.geometry) {
           mesh.geometry.computeVertexNormals();
         }
-        const mat = new THREE.MeshStandardMaterial({
+        const mat = new THREE.MeshPhysicalMaterial({
           color: new THREE.Color(organMeta.color),
-          roughness: 0.28,
-          metalness: 0.12,
+          roughness: 0.22,
+          metalness: 0.06,
+          clearcoat: 0.68,
+          clearcoatRoughness: 0.16,
+          reflectivity: 0.78,
           emissive: new THREE.Color('#000000'),
           emissiveIntensity: 0.05,
           transparent: true,
           opacity: 1.0,
+          clippingPlanes: clippingPlane ? [clippingPlane] : [],
+          clipShadows: true,
         });
         mesh.material = mat;
         mesh.castShadow = true;
@@ -499,7 +519,7 @@ function OrganModel({
       }
     });
     return { clonedScene: clone, materials: mats };
-  }, [scene, organMeta.color]);
+  }, [scene, organMeta.color, clippingPlane]);
 
   // Color calculation
   const targetColor = useMemo(() => {
@@ -517,7 +537,7 @@ function OrganModel({
     return new THREE.Color('#000000');
   }, [isHighlighted, isSelected, hovered, targetColor]);
 
-  const targetEmissiveIntensity = isHighlighted ? 0.65 : isSelected ? 0.5 : hovered ? 0.35 : 0.05;
+  const targetEmissiveIntensity = isHighlighted ? 0.75 : isSelected ? 0.55 : hovered ? 0.35 : 0.05;
 
   // In-place material uniform update (Ultra-fast O(1) WebGL call, zero normal recalculation)
   useEffect(() => {
@@ -533,15 +553,26 @@ function OrganModel({
   useFrame((state) => {
     if (meshRef.current) {
       const t = state.clock.getElapsedTime();
+
+      // 1. Exploded Dissection 3D spatial separation lerp
+      const [exX, exY, exZ] = EXPLODED_OFFSETS[organKey] || [0, 0, 0];
+      const targetX = exX * (explodedRatio || 0);
+      const targetY = exY * (explodedRatio || 0);
+      const targetZ = exZ * (explodedRatio || 0);
+      meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, targetX, 0.14);
+      meshRef.current.position.y = THREE.MathUtils.lerp(meshRef.current.position.y, targetY, 0.14);
+      meshRef.current.position.z = THREE.MathUtils.lerp(meshRef.current.position.z, targetZ, 0.14);
+
+      // 2. Physiological pulse & critical alert radiance
       if (organKey === 'heart') {
         const beat = Math.sin(t * 7.5);
-        const pulse = 1 + (beat > 0.6 ? 0.04 : 0);
+        const pulse = 1 + (beat > 0.6 ? 0.045 : 0);
         meshRef.current.scale.set(pulse, pulse, pulse);
       } else if (isHighlighted) {
-        const pulse = 1 + Math.sin(t * 3.8) * 0.03;
+        const pulse = 1 + Math.sin(t * 4.2) * 0.035;
         meshRef.current.scale.set(pulse, pulse, pulse);
       } else if (isSelected) {
-        const pulse = 1 + Math.sin(t * 2.5) * 0.015;
+        const pulse = 1 + Math.sin(t * 2.8) * 0.018;
         meshRef.current.scale.set(pulse, pulse, pulse);
       } else {
         meshRef.current.scale.set(1, 1, 1);
@@ -574,13 +605,169 @@ function OrganModel({
   );
 }
 
-// Outer Body Skin with Pre-instantiated Materials
+// 3D Slicing Guide Laser Plane
+function SlicingGuidePlane({
+  axis = 'axial',
+  offset = 1.25,
+}: {
+  axis?: 'axial' | 'coronal' | 'sagittal';
+  offset?: number;
+}) {
+  const rot: [number, number, number] =
+    axis === 'coronal'
+      ? [0, 0, 0]
+      : axis === 'sagittal'
+      ? [0, Math.PI / 2, 0]
+      : [-Math.PI / 2, 0, 0];
+
+  const pos: [number, number, number] =
+    axis === 'coronal'
+      ? [0, 1.15, offset]
+      : axis === 'sagittal'
+      ? [offset, 1.15, 0]
+      : [0, offset, 0];
+
+  return (
+    <group position={pos} rotation={rot}>
+      <mesh>
+        <planeGeometry args={[1.6, 1.6]} />
+        <meshBasicMaterial
+          color="#06b6d4"
+          transparent
+          opacity={0.15}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+      <lineSegments>
+        <edgesGeometry args={[new THREE.PlaneGeometry(1.6, 1.6)]} />
+        <lineBasicMaterial color="#22d3ee" transparent opacity={0.8} />
+      </lineSegments>
+    </group>
+  );
+}
+
+// Medical Examination Volumetric Stage with Stereotactic Compass Grid
+function MedicalPedestalStage() {
+  return (
+    <group position={[0, -0.62, 0]}>
+      {/* Central Obsidian Disc */}
+      <mesh receiveShadow>
+        <cylinderGeometry args={[1.5, 1.58, 0.04, 48]} />
+        <meshStandardMaterial
+          color="#030712"
+          roughness={0.2}
+          metalness={0.8}
+        />
+      </mesh>
+      {/* Outer Cyan Radiant Beacon Ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
+        <ringGeometry args={[1.42, 1.46, 64]} />
+        <meshBasicMaterial color="#00e5ff" side={THREE.DoubleSide} transparent opacity={0.65} />
+      </mesh>
+      {/* Inner Concentric Metric Ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.026, 0]}>
+        <ringGeometry args={[0.95, 0.965, 48]} />
+        <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} transparent opacity={0.35} />
+      </mesh>
+      {/* Soft Ground Contact Shadow Plane */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+        <circleGeometry args={[2.2, 32]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.7} />
+      </mesh>
+    </group>
+  );
+}
+
+// Hemodynamic Circulatory Particle Flow (Erythrocyte Corpuscle Stream)
+function HemodynamicParticleFlow({
+  active = true,
+}: {
+  active?: boolean;
+}) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const particleCount = 70;
+
+  const [positions, phases, colors] = useMemo(() => {
+    const pos = new Float32Array(particleCount * 3);
+    const ph = new Float32Array(particleCount);
+    const col = new Float32Array(particleCount * 3);
+
+    const arterialColor = new THREE.Color('#ef4444');
+    const venousColor = new THREE.Color('#0ea5e9');
+
+    for (let i = 0; i < particleCount; i++) {
+      ph[i] = Math.random();
+      const isArterial = i < particleCount * 0.55;
+      const c = isArterial ? arterialColor : venousColor;
+      col[i * 3] = c.r;
+      col[i * 3 + 1] = c.g;
+      col[i * 3 + 2] = c.b;
+    }
+    return [pos, ph, col];
+  }, [particleCount]);
+
+  useFrame((state) => {
+    if (!pointsRef.current || !active) return;
+    const t = state.clock.getElapsedTime();
+    const posAttr = pointsRef.current.geometry.attributes.position as THREE.BufferAttribute;
+
+    for (let i = 0; i < particleCount; i++) {
+      const progress = (phases[i] + t * 0.38) % 1.0;
+      const isArterial = i < particleCount * 0.55;
+
+      if (isArterial) {
+        // Descending Aorta & Arterial Arc: (0, 1.38, 0.05) -> (0.02, 0.65, 0.04)
+        const y = 1.38 - progress * 1.1;
+        const x = Math.sin(progress * Math.PI * 2) * 0.03 + (i % 2 === 0 ? 0.015 : -0.015);
+        const z = 0.05 - progress * 0.04;
+        posAttr.setXYZ(i, x, y, z);
+      } else {
+        // Ascending Inferior Vena Cava: (-0.02, 0.4, 0.02) -> (0, 1.25, 0.06)
+        const y = 0.35 + progress * 0.95;
+        const x = -0.025 + Math.cos(progress * Math.PI) * 0.015;
+        const z = 0.03;
+        posAttr.setXYZ(i, x, y, z);
+      }
+    }
+    posAttr.needsUpdate = true;
+  });
+
+  if (!active) return null;
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+        />
+        <bufferAttribute
+          attach="attributes-color"
+          args={[colors, 3]}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.026}
+        vertexColors
+        transparent
+        opacity={0.88}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+      />
+    </points>
+  );
+}
+
+// Outer Body Skin with Pre-instantiated Materials & Planar Cut Support
 function BodyShell({
   mode = 'hologram',
   opacity = 0.15,
+  clippingPlane = null,
 }: {
   mode: SkinMode;
   opacity: number;
+  clippingPlane?: THREE.Plane | null;
 }) {
   if (mode === 'hidden') return null;
 
@@ -601,12 +788,14 @@ function BodyShell({
   }, [scene]);
 
   const materials: Record<Exclude<SkinMode, 'hidden'>, THREE.Material> = useMemo(() => {
+    const planes = clippingPlane ? [clippingPlane] : [];
     return {
       wireframe: new THREE.MeshBasicMaterial({
         color: new THREE.Color('#34d399'),
         wireframe: true,
         transparent: true,
         opacity: Math.max(0.08, opacity * 0.5),
+        clippingPlanes: planes,
       }),
       solid: new THREE.MeshStandardMaterial({
         color: new THREE.Color('#e2bca8'),
@@ -614,6 +803,8 @@ function BodyShell({
         metalness: 0.05,
         transparent: opacity < 0.95,
         opacity: opacity,
+        clippingPlanes: planes,
+        clipShadows: true,
       }),
       hologram: new THREE.MeshStandardMaterial({
         color: new THREE.Color('#a7f3d0'),
@@ -623,18 +814,22 @@ function BodyShell({
         opacity: opacity,
         depthWrite: false,
         side: THREE.FrontSide,
+        clippingPlanes: planes,
       }),
-      glass: new THREE.MeshStandardMaterial({
+      glass: new THREE.MeshPhysicalMaterial({
         color: new THREE.Color('#e0f2fe'),
         roughness: 0.1,
         metalness: 0.05,
+        clearcoat: 0.8,
+        transmission: 0.82,
         transparent: true,
-        opacity: Math.min(opacity, 0.2),
+        opacity: Math.min(opacity, 0.25),
         depthWrite: false,
         side: THREE.FrontSide,
+        clippingPlanes: planes,
       }),
     };
-  }, []);
+  }, [clippingPlane, opacity]);
 
   useEffect(() => {
     const activeMat = materials[mode] || materials.hologram;
@@ -648,9 +843,17 @@ function BodyShell({
   return <primitive object={clonedScene} />;
 }
 
-// Authentic Skeletal System from BodyParts3D (39 authentic meshes: Rib cage 1-12, Sternum, Clavicles, Vertebrae)
-function SkeletalSystem() {
+// Authentic Skeletal System with Planar Slicing & Exploded Dissection
+function SkeletalSystem({
+  clippingPlane = null,
+  explodedRatio = 0,
+}: {
+  clippingPlane?: THREE.Plane | null;
+  explodedRatio?: number;
+}) {
   const { scene } = useGLTF('/models/skeleton.glb');
+  const groupRef = useRef<THREE.Group>(null);
+
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
     clone.traverse((child) => {
@@ -658,18 +861,31 @@ function SkeletalSystem() {
         const m = child as THREE.Mesh;
         if (m.geometry) m.geometry.computeVertexNormals();
         m.material = new THREE.MeshStandardMaterial({
-          color: new THREE.Color('#f5eedc'),
-          roughness: 0.45,
-          metalness: 0.08,
+          color: new THREE.Color('#fbf7ed'),
+          roughness: 0.38,
+          metalness: 0.05,
           transparent: true,
-          opacity: 0.85,
+          opacity: 0.88,
+          clippingPlanes: clippingPlane ? [clippingPlane] : [],
+          clipShadows: true,
         });
       }
     });
     return clone;
-  }, [scene]);
+  }, [scene, clippingPlane]);
 
-  return <primitive object={clonedScene} />;
+  useFrame(() => {
+    if (groupRef.current) {
+      const targetZ = (explodedRatio || 0) * 0.12;
+      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, targetZ, 0.12);
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      <primitive object={clonedScene} />
+    </group>
+  );
 }
 
 // Authentic Vascular System from BodyParts3D (10 authentic meshes: Aorta, Vena Cava, Pulmonary Trunk, Carotids)
@@ -1052,38 +1268,57 @@ function SceneContent({
   lang: string;
   onUnzoom: () => void;
 }) {
-  // Dynamic clipping plane (Plane equation: normal . p + constant = 0)
+  // Dynamic 3-Axis Anatomical Cross-Section Plane
   const clippingPlane = useMemo(() => {
     if (!layers.clippingPlane) return null;
-    return new THREE.Plane(new THREE.Vector3(0, -1, 0), layers.clippingHeight);
-  }, [layers.clippingPlane, layers.clippingHeight]);
+    const axis = layers.sliceAxis || 'axial';
+    const offset = layers.sliceOffset ?? layers.clippingHeight;
+    if (axis === 'coronal') {
+      return new THREE.Plane(new THREE.Vector3(0, 0, -1), offset);
+    }
+    if (axis === 'sagittal') {
+      return new THREE.Plane(new THREE.Vector3(-1, 0, 0), offset);
+    }
+    // Axial (Horizontal slice)
+    return new THREE.Plane(new THREE.Vector3(0, -1, 0), offset);
+  }, [layers.clippingPlane, layers.sliceAxis, layers.sliceOffset, layers.clippingHeight]);
 
   return (
     <>
       {/* Studio Clinical Lighting Rig (Soft Key + Dual Cyan Rim Lights) */}
-      <ambientLight intensity={0.85} color="#e0f2fe" />
-      <directionalLight position={[3, 6, 4]} intensity={1.5} color="#ffffff" castShadow />
+      <ambientLight intensity={0.9} color="#e0f2fe" />
+      <directionalLight position={[3, 6, 4]} intensity={1.6} color="#ffffff" castShadow />
       {/* Cyan Lateral Rim Light (Fresnel Contour) */}
-      <directionalLight position={[-4, 2, -2]} intensity={2.2} color="#00e5ff" />
-      <directionalLight position={[4, 2, -2]} intensity={2.2} color="#00e5ff" />
+      <directionalLight position={[-4, 2, -2]} intensity={2.4} color="#00e5ff" />
+      <directionalLight position={[4, 2, -2]} intensity={2.4} color="#00e5ff" />
       {/* Backlight Key */}
-      <directionalLight position={[0, -2, -4]} intensity={0.6} color="#38bdf8" />
+      <directionalLight position={[0, -2, -4]} intensity={0.7} color="#38bdf8" />
 
       {/* Pathology Alert Focal Spot */}
       {activeOrgan && (
         <pointLight
           position={ORGANS[activeOrgan] ? ORGANS[activeOrgan].position : [0, 1.2, 0.5]}
-          intensity={highlightedOrgans.has(activeOrgan) ? 3.5 : 1.2}
+          intensity={highlightedOrgans.has(activeOrgan) ? 3.8 : 1.4}
           color={highlightedOrgans.has(activeOrgan) ? '#ff9100' : '#00e5ff'}
-          distance={1.2}
+          distance={1.4}
         />
       )}
 
-      {/* Ground Reflection & Shadow Plane */}
-      <mesh position={[0, -0.65, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[10, 10]} />
-        <meshBasicMaterial color="#020617" transparent opacity={0.6} />
-      </mesh>
+      {/* High-Tech Medical Pedestal & Ground Stage */}
+      <MedicalPedestalStage />
+
+      {/* Dynamic Slicing Guide Laser Plane */}
+      {layers.clippingPlane && (
+        <SlicingGuidePlane
+          axis={layers.sliceAxis || 'axial'}
+          offset={layers.sliceOffset ?? layers.clippingHeight}
+        />
+      )}
+
+      {/* Dynamic Circulatory Hemodynamic Particle Stream */}
+      {layers.animationBloodFlow && !isolateMode && (
+        <HemodynamicParticleFlow active={layers.animationBloodFlow} />
+      )}
 
       {/* 3D Cyan HUD Corner Indicators */}
       <group position={[0, 1.2, 0]}>
@@ -1099,6 +1334,7 @@ function SceneContent({
           <BodyShell
             mode={layers.skinMode}
             opacity={activeOrgan ? Math.min(layers.skinOpacity, 0.10) : layers.skinOpacity}
+            clippingPlane={clippingPlane}
           />
         </Suspense>
       )}
@@ -1109,7 +1345,12 @@ function SceneContent({
       )}
 
       {/* Layer 3: Skeletal System */}
-      {layers.skeleton && !isolateMode && <SkeletalSystem />}
+      {layers.skeleton && !isolateMode && (
+        <SkeletalSystem
+          clippingPlane={clippingPlane}
+          explodedRatio={layers.explodedRatio || 0}
+        />
+      )}
 
       {/* Layer 4: Circulatory Vascular System */}
       {layers.vascular && !isolateMode && (
@@ -1150,6 +1391,8 @@ function SceneContent({
               isHighlighted={highlightedOrgans.has(k)}
               severity={highlightedOrgans.get(k)}
               isDimmed={Boolean(isolateMode && activeOrgan && activeOrgan !== k)}
+              explodedRatio={layers.explodedRatio || 0}
+              clippingPlane={clippingPlane}
               onSelect={onSelectOrgan}
               onHover={onHoverOrgan}
             />
@@ -1351,6 +1594,9 @@ export function AnatomyViewer({
     showArrows: true,
     clippingPlane: false,
     clippingHeight: 1.25,
+    sliceAxis: 'axial',
+    sliceOffset: 1.25,
+    explodedRatio: 0,
     animationHeart: true,
     animationBreathing: true,
     animationBloodFlow: true,
@@ -1831,6 +2077,32 @@ export function AnatomyViewer({
                   </div>
                 </div>
 
+                {/* Exploded Dissection Slider */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-slate-300 font-semibold flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Exploded Dissection:</span>
+                    </span>
+                    <span className="font-mono text-cyan-400">{Math.round((layers.explodedRatio || 0) * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.02"
+                    value={layers.explodedRatio || 0}
+                    onChange={(e) =>
+                      setLayers((prev) => ({ ...prev, explodedRatio: parseFloat(e.target.value) }))
+                    }
+                    className="w-full h-1.5 accent-cyan-400 bg-slate-700 rounded-lg cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                    <span>ANATOMICAL</span>
+                    <span>EXPANDED</span>
+                  </div>
+                </div>
+
                 {/* Annotation Labels & Pins Toggle */}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
                   <span className="text-slate-300">Anatomical Pins:</span>
@@ -1944,22 +2216,66 @@ export function AnatomyViewer({
                   </button>
                 </div>
 
-                {/* Planar Cross-Section Cutting Plane */}
-                <div className="p-2 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-1.5">
+                {/* 3-Axis Planar Cross-Section Cutting Plane */}
+                <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-300 flex items-center gap-1.5">
+                    <span className="text-slate-300 flex items-center gap-1.5 font-semibold">
                       <Scissors className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Cross-Section Cut</span>
+                      <span>3-Axis Cross Section</span>
                     </span>
                     <button
                       onClick={() => setLayers((prev) => ({ ...prev, clippingPlane: !prev.clippingPlane }))}
-                      className={`px-2 py-0.5 rounded-lg font-bold border ${
-                        layers.clippingPlane ? 'bg-cyan-900 text-cyan-200 border-cyan-400' : 'bg-slate-800 text-slate-500 border-slate-700'
+                      className={`px-2 py-0.5 rounded-lg font-bold border transition-all ${
+                        layers.clippingPlane ? 'bg-cyan-600 text-white border-cyan-400 shadow-sm' : 'bg-slate-800 text-slate-400 border-slate-700'
                       }`}
                     >
                       {layers.clippingPlane ? 'ACTIVE' : 'OFF'}
                     </button>
                   </div>
+                  {layers.clippingPlane && (
+                    <div className="space-y-2 pt-1 border-t border-slate-700/60">
+                      {/* Plane Selector: Axial / Coronal / Sagittal */}
+                      <div className="grid grid-cols-3 gap-1">
+                        {(['axial', 'coronal', 'sagittal'] as const).map((axis) => (
+                          <button
+                            key={axis}
+                            onClick={() =>
+                              setLayers((prev) => ({
+                                ...prev,
+                                sliceAxis: axis,
+                                sliceOffset: axis === 'axial' ? 1.25 : 0.0,
+                              }))
+                            }
+                            className={`py-1 rounded-lg text-[9px] font-bold uppercase transition-all ${
+                              (layers.sliceAxis || 'axial') === axis
+                                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400'
+                                : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200'
+                            }`}
+                          >
+                            {axis === 'axial' ? 'Axial (Y)' : axis === 'coronal' ? 'Coronal (Z)' : 'Sagittal (X)'}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Offset Depth Slider */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-slate-400">
+                          <span>Slice Depth</span>
+                          <span className="font-mono text-cyan-400">{(layers.sliceOffset ?? 1.25).toFixed(2)}m</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={layers.sliceAxis === 'axial' ? '0.2' : layers.sliceAxis === 'coronal' ? '-0.3' : '-0.35'}
+                          max={layers.sliceAxis === 'axial' ? '1.9' : layers.sliceAxis === 'coronal' ? '0.3' : '0.35'}
+                          step="0.02"
+                          value={layers.sliceOffset ?? (layers.sliceAxis === 'axial' ? 1.25 : 0)}
+                          onChange={(e) =>
+                            setLayers((prev) => ({ ...prev, sliceOffset: parseFloat(e.target.value) }))
+                          }
+                          className="w-full h-1.5 accent-cyan-400 bg-slate-700 rounded-lg cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 2D / 3D Mobile Fallback Toggle */}
@@ -2118,23 +2434,70 @@ export function AnatomyViewer({
             ))}
           </div>
 
-          {/* Interactive Clipping Plane Height Controller */}
+          {/* Interactive 3-Axis Planar Cross-Section Slicer Controller HUD */}
           {layers.clippingPlane && (
-            <div className="absolute bottom-16 left-4 z-10 flex items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-cyan-500/50 shadow-xl text-xs text-cyan-200 pointer-events-auto animate-in fade-in">
+            <div className="absolute bottom-16 left-4 z-10 flex flex-wrap items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-cyan-500/50 shadow-xl text-xs text-cyan-200 pointer-events-auto animate-in fade-in">
               <Scissors className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="font-semibold">Plane Height:</span>
+              {/* Axis Selector Pills */}
+              <div className="flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-lg border border-cyan-900/40">
+                {(['axial', 'coronal', 'sagittal'] as const).map((axis) => (
+                  <button
+                    key={axis}
+                    onClick={() =>
+                      setLayers((prev) => ({
+                        ...prev,
+                        sliceAxis: axis,
+                        sliceOffset: axis === 'axial' ? 1.25 : 0.0,
+                      }))
+                    }
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase transition-all ${
+                      (layers.sliceAxis || 'axial') === axis
+                        ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {axis[0].toUpperCase()}
+                  </button>
+                ))}
+              </div>
               <input
                 type="range"
-                min="0.1"
-                max="2.1"
-                step="0.05"
-                value={layers.clippingHeight}
+                min={layers.sliceAxis === 'axial' ? '0.2' : layers.sliceAxis === 'coronal' ? '-0.3' : '-0.35'}
+                max={layers.sliceAxis === 'axial' ? '1.9' : layers.sliceAxis === 'coronal' ? '0.3' : '0.35'}
+                step="0.02"
+                value={layers.sliceOffset ?? (layers.sliceAxis === 'axial' ? 1.25 : 0)}
                 onChange={(e) =>
-                  setLayers((prev) => ({ ...prev, clippingHeight: parseFloat(e.target.value) }))
+                  setLayers((prev) => ({ ...prev, sliceOffset: parseFloat(e.target.value) }))
                 }
                 className="w-24 h-1.5 accent-cyan-400 bg-slate-700 rounded-lg cursor-pointer"
               />
-              <span className="font-mono text-[10px] text-cyan-300">{layers.clippingHeight.toFixed(2)}m</span>
+              <span className="font-mono text-[10px] text-cyan-300">
+                {(layers.sliceOffset ?? 1.25).toFixed(2)}m
+              </span>
+              <button
+                onClick={() => setLayers((prev) => ({ ...prev, clippingPlane: false }))}
+                className="text-slate-400 hover:text-red-400 ml-1"
+                title="Close Cross-Section"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Exploded Dissection Quick Status & Reset */}
+          {(layers.explodedRatio || 0) > 0 && (
+            <div className="absolute bottom-16 right-4 z-10 hidden sm:flex items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-cyan-500/50 shadow-xl text-xs text-cyan-200 pointer-events-auto animate-in fade-in">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+              <span className="font-semibold">Exploded:</span>
+              <span className="font-mono text-[10px] text-cyan-300">
+                {Math.round((layers.explodedRatio || 0) * 100)}%
+              </span>
+              <button
+                onClick={() => setLayers((prev) => ({ ...prev, explodedRatio: 0 }))}
+                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[9px] font-bold text-slate-300"
+              >
+                Reset
+              </button>
             </div>
           )}
 
