@@ -47,9 +47,24 @@ import {
   Settings,
   FileText,
   X,
+  Mic,
+  MicOff,
+  SlidersHorizontal,
+  Bookmark,
+  Scan,
+  Maximize,
+  Minimize,
+  EyeOff,
+  Award,
 } from 'lucide-react';
 import { ANATOMICAL_STRUCTURES } from '../../data/anatomyNomenclature';
 import { DeepAnatomyModal } from './DeepAnatomyModal';
+import { TomographicScanWave } from './TomographicScanWave';
+import { DiagnosticRefractionLoupe } from './DiagnosticRefractionLoupe';
+import { AnatomyMiniMap } from './AnatomyMiniMap';
+import { GuidedTourModal } from './GuidedTourModal';
+import { AnatomyQuizModal } from './AnatomyQuizModal';
+import { QuickScanModal } from './QuickScanModal';
 import { playOrganClickChime } from '../../utils/audioChime';
 import bp3dCatalog from '../../data/bp3dCatalog.json';
 import { web3Service, Web3AttestationResult } from '../../services/web3HealthVerification';
@@ -460,7 +475,18 @@ const EXPLODED_OFFSETS: Record<OrganKey, [number, number, number]> = {
   intestines: [0.0, -0.32, 0.46],
 };
 
-// Individual GLB Organ Component with PBR Physical Biological Shading & Exploded Lerp
+const ORGAN_ATTENUATION_COLORS: Record<OrganKey, string> = {
+  heart: '#7f1d1d',
+  brain: '#334155',
+  lungs: '#881337',
+  liver: '#78350f',
+  stomach: '#713f12',
+  pancreas: '#a16207',
+  kidneys: '#450a0a',
+  intestines: '#854d0e',
+};
+
+// Individual GLB Organ Component with PBR Physical Biological Shading, Subsurface Absorption & Exploded Lerp
 function OrganModel({
   organKey,
   isSelected,
@@ -488,10 +514,12 @@ function OrganModel({
 
   const { scene } = useGLTF(`/models/${organKey}.glb`);
 
-  // Clone scene and apply premium MeshPhysicalMaterial for wet, realistic biological tissue
+  // Clone scene and apply premium MeshPhysicalMaterial for wet, realistic biological tissue with light absorption
   const { clonedScene, materials } = useMemo(() => {
     const clone = scene.clone(true);
     const mats: THREE.MeshPhysicalMaterial[] = [];
+    const attColor = ORGAN_ATTENUATION_COLORS[organKey] || organMeta.color;
+
     clone.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
@@ -505,6 +533,9 @@ function OrganModel({
           clearcoat: 0.68,
           clearcoatRoughness: 0.16,
           reflectivity: 0.78,
+          thickness: 0.38,
+          attenuationColor: new THREE.Color(attColor),
+          attenuationDistance: 0.62,
           emissive: new THREE.Color('#000000'),
           emissiveIntensity: 0.05,
           transparent: true,
@@ -519,7 +550,7 @@ function OrganModel({
       }
     });
     return { clonedScene: clone, materials: mats };
-  }, [scene, organMeta.color, clippingPlane]);
+  }, [scene, organKey, organMeta.color, clippingPlane]);
 
   // Color calculation
   const targetColor = useMemo(() => {
@@ -571,6 +602,10 @@ function OrganModel({
       } else if (isHighlighted) {
         const pulse = 1 + Math.sin(t * 4.2) * 0.035;
         meshRef.current.scale.set(pulse, pulse, pulse);
+        const glow = 0.55 + Math.sin(t * 4.2) * 0.35;
+        materials.forEach((mat) => {
+          mat.emissiveIntensity = glow;
+        });
       } else if (isSelected) {
         const pulse = 1 + Math.sin(t * 2.8) * 0.018;
         meshRef.current.scale.set(pulse, pulse, pulse);
@@ -1257,6 +1292,8 @@ function SceneContent({
   isolateMode,
   lang,
   onUnzoom,
+  isScannerWaveActive = false,
+  isLoupeActive = false,
 }: {
   activeOrgan: OrganKey | null;
   hoveredOrgan: OrganKey | null;
@@ -1267,6 +1304,8 @@ function SceneContent({
   isolateMode: boolean;
   lang: string;
   onUnzoom: () => void;
+  isScannerWaveActive?: boolean;
+  isLoupeActive?: boolean;
 }) {
   // Dynamic 3-Axis Anatomical Cross-Section Plane
   const clippingPlane = useMemo(() => {
@@ -1314,6 +1353,19 @@ function SceneContent({
           offset={layers.sliceOffset ?? layers.clippingHeight}
         />
       )}
+
+      {/* Real-Time Custom GLSL Tomographic Medical Laser Scan Wave */}
+      <TomographicScanWave active={isScannerWaveActive} />
+
+      {/* Real-Time Optical Refraction Diagnostic Loupe with Chromatic Dispersion */}
+      <DiagnosticRefractionLoupe
+        active={isLoupeActive}
+        position={
+          activeOrgan && ORGANS[activeOrgan]
+            ? [ORGANS[activeOrgan].position[0], ORGANS[activeOrgan].position[1], 0.38]
+            : [0, 1.25, 0.42]
+        }
+      />
 
       {/* Dynamic Circulatory Hemodynamic Particle Stream */}
       {layers.animationBloodFlow && !isolateMode && (
@@ -1572,6 +1624,40 @@ export function AnatomyViewer({
   const [mobileTab, setMobileTab] = useState<'3d' | 'findings'>('3d');
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
 
+  // Next-Gen Real-Time Exploration & Mobile Vision Pro State
+  const [isScannerWaveActive, setIsScannerWaveActive] = useState(false);
+  const [isLoupeActive, setIsLoupeActive] = useState(false);
+  const [isTourOpen, setIsTourOpen] = useState(false);
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
+  const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [xrayDepth, setXrayDepth] = useState(20);
+  const [showXraySliderPopup, setShowXraySliderPopup] = useState(false);
+  const [mobileSheetSnap, setMobileSheetSnap] = useState<'collapsed' | 'peek' | 'expanded'>('collapsed');
+  const [inspectorTab, setInspectorTab] = useState<'western' | 'ayurveda'>('western');
+  const [activeBookmark, setActiveBookmark] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [isQuickScanOpen, setIsQuickScanOpen] = useState(false);
+  const [internalReportRows, setInternalReportRows] = useState<TestRow[] | null>(null);
+  const [scannedReportTitle, setScannedReportTitle] = useState<string>('');
+  const activeReportRows = internalReportRows || reportRows;
+
+  // WebGL context loss recovery listeners
+  useEffect(() => {
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+      console.warn('[WebGL] Context lost. Preventing default and restoring...');
+    };
+    const handleContextRestored = () => {
+      console.info('[WebGL] Context restored successfully.');
+    };
+    window.addEventListener('webglcontextlost', handleContextLost);
+    window.addEventListener('webglcontextrestored', handleContextRestored);
+    return () => {
+      window.removeEventListener('webglcontextlost', handleContextLost);
+      window.removeEventListener('webglcontextrestored', handleContextRestored);
+    };
+  }, []);
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
     window.addEventListener('resize', handleResize);
@@ -1683,6 +1769,12 @@ export function AnatomyViewer({
     if (soundEnabled) {
       playOrganClickChime(key ? 520 : 380);
     }
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate?.([15]);
+    }
+    if (key && isMobile && mobileSheetSnap === 'collapsed') {
+      setMobileSheetSnap('peek');
+    }
     if (onSelectOrgan) onSelectOrgan(key);
     if (onSelectFinding) {
       if (key && reportRows.length > 0) {
@@ -1692,7 +1784,142 @@ export function AnatomyViewer({
         onSelectFinding(null);
       }
     }
-  }, [soundEnabled, onSelectOrgan, onSelectFinding, reportRows]);
+  }, [soundEnabled, onSelectOrgan, onSelectFinding, reportRows, isMobile, mobileSheetSnap]);
+
+  // Continuous X-Ray slider: smooth transition from skin -> muscle -> skeleton -> viscera
+  const handleXrayChange = (val: number) => {
+    setXrayDepth(val);
+    const skinOp = Math.max(0, 1 - val / 35);
+    setLayers((prev) => ({
+      ...prev,
+      skin: val < 45,
+      skinOpacity: skinOp,
+      muscular: val >= 18 && val <= 52,
+      skeleton: val >= 32 && val <= 85,
+      vascular: val >= 28,
+      organs: val >= 40,
+      nervous: val >= 65,
+      endocrine: val >= 68,
+      urinary: val >= 58,
+    }));
+  };
+
+  // Web Speech API Voice Search
+  const startVoiceSearch = () => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert(lang === 'hi' ? 'वॉयस सर्च समर्थित नहीं है। कृपया लिखकर खोजें।' : 'Voice search is not supported in this browser. Please use text search.');
+      return;
+    }
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
+      recognition.interimResults = false;
+      recognition.onstart = () => setIsListening(true);
+      recognition.onend = () => setIsListening(false);
+      recognition.onerror = () => setIsListening(false);
+      recognition.onresult = (event: any) => {
+        setIsListening(false);
+        const transcript = (event.results?.[0]?.[0]?.transcript || '').toLowerCase().trim();
+        for (const key of ALL_ORGAN_KEYS) {
+          const meta = ORGANS[key];
+          if (
+            transcript.includes(key) ||
+            transcript.includes(meta.nameEn.toLowerCase()) ||
+            transcript.includes(meta.nameHi.toLowerCase())
+          ) {
+            handleSelectOrgan(key);
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              navigator.vibrate?.([20]);
+            }
+            return;
+          }
+        }
+        setOrganSearchQuery(transcript);
+      };
+      recognition.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
+
+  // Anatomical Quick Bookmarks
+  const ANATOMICAL_BOOKMARKS = [
+    {
+      id: 'cardiopulmonary',
+      nameEn: 'Cardiopulmonary',
+      nameHi: 'हृदय व फेफड़े',
+      organs: ['heart', 'lungs'] as OrganKey[],
+      apply: () => {
+        handleSelectOrgan('heart');
+        setActiveBookmark('cardiopulmonary');
+        setLayers((prev) => ({
+          ...prev,
+          skin: false,
+          muscular: false,
+          skeleton: true,
+          vascular: true,
+          organs: true,
+        }));
+      },
+    },
+    {
+      id: 'gastrointestinal',
+      nameEn: 'Digestive Axis',
+      nameHi: 'पाचन तंत्र',
+      organs: ['liver', 'stomach', 'pancreas', 'intestines'] as OrganKey[],
+      apply: () => {
+        handleSelectOrgan('liver');
+        setActiveBookmark('gastrointestinal');
+        setLayers((prev) => ({
+          ...prev,
+          skin: false,
+          muscular: false,
+          skeleton: false,
+          vascular: false,
+          organs: true,
+        }));
+      },
+    },
+    {
+      id: 'renal_excretory',
+      nameEn: 'Renal / Excretory',
+      nameHi: 'गुर्दे व मूत्र',
+      organs: ['kidneys'] as OrganKey[],
+      apply: () => {
+        handleSelectOrgan('kidneys');
+        setActiveBookmark('renal_excretory');
+        setCameraAngle('back');
+        setLayers((prev) => ({
+          ...prev,
+          skin: false,
+          muscular: false,
+          skeleton: true,
+          urinary: true,
+          organs: true,
+        }));
+      },
+    },
+    {
+      id: 'neuro_cranial',
+      nameEn: 'Neuro-Cranial',
+      nameHi: 'मस्तिष्क तंत्र',
+      organs: ['brain'] as OrganKey[],
+      apply: () => {
+        handleSelectOrgan('brain');
+        setActiveBookmark('neuro_cranial');
+        setCameraAngle('top');
+        setLayers((prev) => ({
+          ...prev,
+          skin: false,
+          muscular: false,
+          skeleton: false,
+          nervous: true,
+          organs: true,
+        }));
+      },
+    },
+  ];
 
   // Keyboard navigation shortcuts
   useEffect(() => {
@@ -1711,6 +1938,16 @@ export function AnatomyViewer({
         setIsolateMode((prev) => !prev);
       } else if (e.key.toLowerCase() === 'm') {
         setSoundEnabled((prev) => !prev);
+      } else if (e.key.toLowerCase() === 't') {
+        setIsTourOpen(true);
+      } else if (e.key.toLowerCase() === 'q') {
+        setIsQuizOpen(true);
+      } else if (e.key.toLowerCase() === 'i') {
+        setIsImmersiveMode((prev) => !prev);
+      } else if (e.key.toLowerCase() === 'l') {
+        setIsLoupeActive((prev) => !prev);
+      } else if (e.key.toLowerCase() === 'w') {
+        setIsScannerWaveActive((prev) => !prev);
       } else if (e.key.toLowerCase() === 's') {
         setLayers((prev) => ({
           ...prev,
@@ -1745,57 +1982,77 @@ export function AnatomyViewer({
     });
   }, [organSearchQuery]);
 
-  // Smooth camera position with angle presets (auto-calibrated for mobile vs desktop)
+  // Smooth camera position with angle presets (auto-calibrated for narrow mobile vs desktop)
   const { targetPos, targetLookAt } = useMemo(() => {
+    const isNarrowMobile = isMobile && typeof window !== 'undefined' && window.innerWidth < 450;
+    // If mobile peek sheet is open, offset target upward to frame organ squarely above the bottom sheet
+    const mobileYOffset = isMobile && mobileSheetSnap === 'peek' ? 0.38 : (isMobile ? 0.12 : 0);
+    const zoomDist = isNarrowMobile ? 5.1 : (isMobile ? 4.4 : 3.2);
+
     if (currentOrgan && ORGANS[currentOrgan]) {
       const meta = ORGANS[currentOrgan];
       const pos = meta.position;
-      const dist = meta.cameraDistance * (isMobile ? 1.25 : 1.0);
+      const dist = meta.cameraDistance * (isNarrowMobile ? 1.45 : isMobile ? 1.25 : 1.0);
       return {
-        targetPos: new THREE.Vector3(pos[0] * 0.35, pos[1], pos[2] + dist),
-        targetLookAt: new THREE.Vector3(pos[0], pos[1], pos[2]),
+        targetPos: new THREE.Vector3(pos[0] * 0.25, pos[1] + mobileYOffset, pos[2] + dist),
+        targetLookAt: new THREE.Vector3(pos[0], pos[1] + mobileYOffset, pos[2]),
       };
     }
-    const zoomDist = isMobile ? 4.3 : 3.2;
     if (cameraAngle === 'back') {
       return {
-        targetPos: new THREE.Vector3(0, 1.25, -zoomDist),
-        targetLookAt: new THREE.Vector3(0, 1.15, 0),
+        targetPos: new THREE.Vector3(0, (isMobile ? 1.15 : 1.25) + mobileYOffset, -zoomDist),
+        targetLookAt: new THREE.Vector3(0, (isMobile ? 1.05 : 1.15) + mobileYOffset, 0),
       };
     }
     if (cameraAngle === 'left') {
       return {
-        targetPos: new THREE.Vector3(-zoomDist, 1.25, 0),
-        targetLookAt: new THREE.Vector3(0, 1.15, 0),
+        targetPos: new THREE.Vector3(-zoomDist, (isMobile ? 1.15 : 1.25) + mobileYOffset, 0),
+        targetLookAt: new THREE.Vector3(0, (isMobile ? 1.05 : 1.15) + mobileYOffset, 0),
       };
     }
     if (cameraAngle === 'right') {
       return {
-        targetPos: new THREE.Vector3(zoomDist, 1.25, 0),
-        targetLookAt: new THREE.Vector3(0, 1.15, 0),
+        targetPos: new THREE.Vector3(zoomDist, (isMobile ? 1.15 : 1.25) + mobileYOffset, 0),
+        targetLookAt: new THREE.Vector3(0, (isMobile ? 1.05 : 1.15) + mobileYOffset, 0),
       };
     }
     if (cameraAngle === 'top') {
       return {
-        targetPos: new THREE.Vector3(0, isMobile ? 4.8 : 4.0, 0.4),
-        targetLookAt: new THREE.Vector3(0, 1.15, 0),
+        targetPos: new THREE.Vector3(0, (isNarrowMobile ? 5.4 : isMobile ? 4.8 : 4.0) + mobileYOffset, 0.4),
+        targetLookAt: new THREE.Vector3(0, (isMobile ? 1.05 : 1.15) + mobileYOffset, 0),
       };
     }
-    // Default Front full body frame - calibrated for full upright body visibility
+    // Default Front full body frame - auto-scaled for mobile viewports
     return {
-      targetPos: new THREE.Vector3(0, isMobile ? 1.10 : 1.25, zoomDist),
-      targetLookAt: new THREE.Vector3(0, isMobile ? 1.05 : 1.15, 0),
+      targetPos: new THREE.Vector3(0, (isMobile ? 1.05 : 1.25) + mobileYOffset, zoomDist),
+      targetLookAt: new THREE.Vector3(0, (isMobile ? 1.00 : 1.15) + mobileYOffset, 0),
     };
-  }, [currentOrgan, cameraAngle, isMobile]);
+  }, [currentOrgan, cameraAngle, isMobile, mobileSheetSnap]);
 
   // Deep scan of all report rows to identify critical / high-risk organs
   const highRiskOrgans = useMemo(() => {
-    const list: { organ: OrganKey; testName: string; value: string; status: 'high' | 'low'; unit?: string; range?: string }[] = [];
+    const list: {
+      organ: OrganKey;
+      testName: string;
+      value: string;
+      status: 'high' | 'low';
+      unit?: string;
+      range?: string;
+      severity: 'critical' | 'high' | 'moderate';
+    }[] = [];
     const seen = new Set<OrganKey>();
-    reportRows.forEach((r) => {
+    activeReportRows.forEach((r) => {
       if (r.organ && (r.status === 'high' || r.status === 'low')) {
         if (!seen.has(r.organ)) {
           seen.add(r.organ);
+          const num = typeof r.numericValue === 'number' ? r.numericValue : parseFloat(r.value);
+          let severity: 'critical' | 'high' | 'moderate' = 'high';
+          if (r.organ === 'heart' && (/troponin|ck-mb/i.test(r.name) || num > 250)) severity = 'critical';
+          if (r.organ === 'kidneys' && (/creatinine/i.test(r.name) && num > 1.8)) severity = 'critical';
+          if (r.organ === 'pancreas' && ((/glucose|sugar/i.test(r.name) && num > 180) || (/hba1c/i.test(r.name) && num > 8.0))) severity = 'critical';
+          if (r.organ === 'liver' && (/sgpt|alt|bilirubin/i.test(r.name) && num > 95)) severity = 'critical';
+          if (r.organ === 'lungs' && (/hemoglobin|hb/i.test(r.name) && num < 9.5)) severity = 'critical';
+
           list.push({
             organ: r.organ,
             testName: r.name,
@@ -1803,29 +2060,30 @@ export function AnatomyViewer({
             status: r.status,
             unit: r.unit,
             range: r.range,
+            severity,
           });
         }
       }
     });
     return list;
-  }, [reportRows]);
+  }, [activeReportRows]);
 
   const highlightedOrgans = useMemo(() => {
     const map = new Map<OrganKey, 'high' | 'low'>();
-    reportRows.forEach((r) => {
+    activeReportRows.forEach((r) => {
       if (r.organ && (r.status === 'high' || r.status === 'low')) {
         map.set(r.organ, r.status);
       }
     });
     return map;
-  }, [reportRows]);
+  }, [activeReportRows]);
 
   const activeOrganMeta = currentOrgan ? ORGANS[currentOrgan] : null;
 
   const organRelatedTests = useMemo(() => {
     if (!currentOrgan) return [];
-    return reportRows.filter((r) => r.organ === currentOrgan);
-  }, [currentOrgan, reportRows]);
+    return activeReportRows.filter((r) => r.organ === currentOrgan);
+  }, [currentOrgan, activeReportRows]);
 
   const organMicroStructures = useMemo(() => {
     if (!currentOrgan) return [];
@@ -1849,93 +2107,79 @@ export function AnatomyViewer({
   return (
     <div className="relative flex flex-col h-full w-full rounded-3xl overflow-hidden border border-emerald-900/20 bg-slate-950 text-white shadow-2xl">
       {/* Top Header & Clean Streamlined Primary Controls */}
-      <div className="p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md z-20">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <h3 className="font-black text-sm tracking-tight text-white flex items-center gap-2">
-              <span>{t('anatomy.title')}</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/50">
-                BodyParts3D & Z-Anatomy
-              </span>
-            </h3>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            {currentOrgan
-              ? `${lang === 'hi' ? activeOrganMeta?.nameHi : activeOrganMeta?.nameEn} (${activeOrganMeta?.fmaId})`
-              : 'Interactive 3D Body Anatomy · Click any organ to zoom & inspect'}
-          </p>
-        </div>
-
-        {/* Clean, Essential Controls for General Users */}
-        <div className="flex items-center gap-1.5 text-xs relative">
-          {/* Mobile View Switcher (< lg screens) */}
-          <div className="flex lg:hidden items-center bg-slate-800/90 p-0.5 rounded-xl border border-slate-700 mr-1">
-            <button
-              onClick={() => setMobileTab('3d')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                mobileTab === '3d'
-                  ? 'bg-emerald-600 text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              🧍 3D Body
-            </button>
-            <button
-              onClick={() => setMobileTab('findings')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                mobileTab === 'findings'
-                  ? 'bg-emerald-600 text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span>📋 Findings ({reportRows.length})</span>
-              {highRiskOrgans.length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-              )}
-            </button>
+      {!isImmersiveMode && (
+        <div className="p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md z-20">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              <h3 className="font-black text-sm tracking-tight text-white flex items-center gap-2">
+                <span>{t('anatomy.title')}</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/50">
+                  BodyParts3D & Z-Anatomy
+                </span>
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {currentOrgan
+                ? `${lang === 'hi' ? activeOrganMeta?.nameHi : activeOrganMeta?.nameEn} (${activeOrganMeta?.fmaId})`
+                : scannedReportTitle
+                ? `Mapped: ${scannedReportTitle} · ${highRiskOrgans.length} Critical Risks`
+                : 'Interactive 3D Body Anatomy · Click any organ to zoom & inspect'}
+            </p>
           </div>
 
-          {/* Auto-Orbit Toggle */}
-          <button
-            onClick={() => setAutoRotate(!autoRotate)}
-            className={`px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
-              autoRotate
-                ? 'bg-indigo-600 border-indigo-400 text-white shadow-sm'
-                : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-            }`}
-            title="Auto-rotate 3D model (Press 'O')"
-          >
-            <Orbit className={`w-3.5 h-3.5 ${autoRotate ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{autoRotate ? 'Orbiting' : 'Orbit'}</span>
-          </button>
+          {/* Clean, Essential Controls for General Users */}
+          <div className="flex items-center gap-1.5 text-xs relative">
+            {/* Mobile View Switcher (< lg screens) */}
+            <div className="flex lg:hidden items-center bg-slate-800/90 p-0.5 rounded-xl border border-slate-700 mr-1">
+              <button
+                onClick={() => setMobileTab('3d')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                  mobileTab === '3d'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🧍 3D Body
+              </button>
+              <button
+                onClick={() => setMobileTab('findings')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  mobileTab === 'findings'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>📋 Findings ({activeReportRows.length})</span>
+                {highRiskOrgans.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                )}
+              </button>
+            </div>
 
-          {/* Solo Focus / Isolate Mode Toggle */}
-          <button
-            onClick={() => setIsolateMode(!isolateMode)}
-            className={`px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
-              isolateMode
-                ? 'bg-amber-600 border-amber-400 text-white shadow-sm'
-                : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-            }`}
-            title="Isolate selected organ / X-ray focus (Press 'X')"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{isolateMode ? 'Solo ON' : 'Solo'}</span>
-          </button>
+            {/* Quick OCR Scan Button - Primary Action for General Users */}
+            <button
+              onClick={() => setIsQuickScanOpen(true)}
+              className="px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg border border-emerald-400/50 transition-all text-xs shrink-0"
+              title="Scan any lab report (PDF, Image, Text) with OCR"
+            >
+              <Scan className="w-3.5 h-3.5 text-emerald-200" />
+              <span className="hidden sm:inline">{lang === 'hi' ? 'रिपोर्ट स्कैन (OCR)' : 'Scan Report (OCR)'}</span>
+              <span className="sm:hidden">Scan</span>
+            </button>
 
-          {/* Reset View Button */}
-          <button
-            onClick={() => {
-              handleSelectOrgan(null);
-              setCameraAngle('front');
-            }}
-            className="px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-all"
-            title="Reset to Full Body Overview"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Reset</span>
-          </button>
+            {/* Reset View Button */}
+            <button
+              onClick={() => {
+                handleSelectOrgan(null);
+                setCameraAngle('front');
+              }}
+              className="px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-all shrink-0"
+              title="Reset to Full Body Overview"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
 
           {/* Layers Dropdown Menu Toggle */}
           <div className="relative">
@@ -1969,6 +2213,31 @@ export function AnatomyViewer({
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
+                </div>
+
+                {/* Continuous X-Ray Depth Slider */}
+                <div className="space-y-1.5 p-2 rounded-xl bg-slate-800/70 border border-cyan-800/40">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-cyan-300 font-bold flex items-center gap-1">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Continuous X-Ray Depth:</span>
+                    </span>
+                    <span className="font-mono text-cyan-400 font-bold">{xrayDepth}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={xrayDepth}
+                    onChange={(e) => handleXrayChange(parseInt(e.target.value, 10))}
+                    className="w-full h-1.5 accent-cyan-400 bg-slate-700 rounded-lg cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[9px] font-mono text-slate-400">
+                    <span>SKIN</span>
+                    <span>MUSCLE</span>
+                    <span>BONE</span>
+                    <span>VISCERA</span>
+                  </div>
                 </div>
 
                 {/* Peel Transparency Slider */}
@@ -2152,6 +2421,84 @@ export function AnatomyViewer({
                   </button>
                 </div>
 
+                {/* Guided 3D Anatomy Tour */}
+                <button
+                  onClick={() => {
+                    setIsTourOpen(true);
+                    setShowToolsDropdown(false);
+                  }}
+                  className="w-full p-2 rounded-xl bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-800/60 text-left flex items-center justify-between transition-all"
+                >
+                  <div className="flex items-center gap-2">
+                    <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                    <span className="font-semibold text-cyan-200">Guided 3D Anatomy Tour</span>
+                  </div>
+                  <span className="text-[9px] bg-cyan-900 text-cyan-300 px-1.5 py-0.5 rounded font-mono">6 Stops</span>
+                </button>
+
+                {/* Interactive Clinical Quiz */}
+                <button
+                  onClick={() => {
+                    setIsQuizOpen(true);
+                    setShowToolsDropdown(false);
+                  }}
+                  className="w-full p-2 rounded-xl bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/60 text-left flex items-center justify-between transition-all"
+                >
+                  <div className="flex items-center gap-2">
+                    <Award className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="font-semibold text-emerald-200">Interactive Clinical Quiz</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-900 text-emerald-300 px-1.5 py-0.5 rounded font-mono">5 Qs</span>
+                </button>
+
+                {/* GLSL Tomographic Medical Laser Wave */}
+                <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/60 border border-slate-700/80">
+                  <div className="flex items-center gap-2">
+                    <Scan className="w-3.5 h-3.5 text-cyan-400" />
+                    <span className="text-slate-300">MRI/CT Laser Wave</span>
+                  </div>
+                  <button
+                    onClick={() => setIsScannerWaveActive(!isScannerWaveActive)}
+                    className={`px-2 py-0.5 rounded-lg font-bold border transition-all ${
+                      isScannerWaveActive ? 'bg-cyan-600 text-white border-cyan-400' : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {isScannerWaveActive ? 'ACTIVE' : 'OFF'}
+                  </button>
+                </div>
+
+                {/* Optical Refraction Diagnostic Loupe */}
+                <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/60 border border-slate-700/80">
+                  <div className="flex items-center gap-2">
+                    <Crosshair className="w-3.5 h-3.5 text-sky-400" />
+                    <span className="text-slate-300">Diagnostic Loupe</span>
+                  </div>
+                  <button
+                    onClick={() => setIsLoupeActive(!isLoupeActive)}
+                    className={`px-2 py-0.5 rounded-lg font-bold border transition-all ${
+                      isLoupeActive ? 'bg-sky-600 text-white border-sky-400' : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {isLoupeActive ? 'ACTIVE' : 'OFF'}
+                  </button>
+                </div>
+
+                {/* Distraction-Free Immersive Mode */}
+                <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/60 border border-slate-700/80">
+                  <div className="flex items-center gap-2">
+                    <Maximize className="w-3.5 h-3.5 text-purple-400" />
+                    <span className="text-slate-300">Immersive Mode</span>
+                  </div>
+                  <button
+                    onClick={() => setIsImmersiveMode(!isImmersiveMode)}
+                    className={`px-2 py-0.5 rounded-lg font-bold border transition-all ${
+                      isImmersiveMode ? 'bg-purple-600 text-white border-purple-400' : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {isImmersiveMode ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
                 {/* 2,234 Micro-Structures Browser */}
                 <button
                   onClick={() => {
@@ -2309,9 +2656,10 @@ export function AnatomyViewer({
           </div>
         </div>
       </div>
+      )}
 
       {/* Critical & High Risk Health Alerts Banner */}
-      {highRiskOrgans.length > 0 && (
+      {!isImmersiveMode && highRiskOrgans.length > 0 && (
         <div className="bg-gradient-to-r from-red-950/95 via-slate-900/95 to-amber-950/95 border-b border-red-500/50 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-10 shadow-lg animate-in fade-in">
           <div className="flex items-center gap-2 text-xs font-black text-red-200">
             <span className="relative flex h-2.5 w-2.5">
@@ -2346,6 +2694,11 @@ export function AnatomyViewer({
                   <span className="text-[10px] font-mono text-red-300 opacity-90">
                     ({item.testName}: {item.value})
                   </span>
+                  {item.severity === 'critical' && (
+                    <span className="text-[8px] px-1 py-0.2 rounded bg-red-500 text-white font-black uppercase">
+                      CRITICAL
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -2357,7 +2710,9 @@ export function AnatomyViewer({
       <div className="relative flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-[500px]">
         {/* 3D Canvas Viewport */}
         <div
-          className={`${mobileTab === 'findings' ? 'hidden lg:block' : 'block'} lg:col-span-8 relative w-full h-[52vh] sm:h-[60vh] lg:h-full cursor-grab active:cursor-grabbing bg-slate-950`}
+          className={`${isImmersiveMode ? 'lg:col-span-12' : 'lg:col-span-8'} relative w-full ${
+            mobileTab === 'findings' ? 'h-[36vh] sm:h-[45vh]' : 'h-[55vh] sm:h-[64vh]'
+          } lg:h-full cursor-grab active:cursor-grabbing bg-slate-950 transition-all duration-300`}
           onMouseDown={() => setIsInteracting(true)}
           onMouseUp={() => setIsInteracting(false)}
           onTouchStart={() => setIsInteracting(true)}
@@ -2365,16 +2720,26 @@ export function AnatomyViewer({
         >
           {/* Top Organ Navigation Pills & Search Filter */}
           <div className="absolute top-3 left-3 right-3 z-10 flex items-center gap-1.5 overflow-x-auto pb-1 pointer-events-auto">
-            {/* Quick Organ Search */}
-            <div className="relative flex items-center min-w-[125px] max-w-[150px] shrink-0">
+            {/* Quick Organ Search with Voice Dictation */}
+            <div className="relative flex items-center min-w-[145px] max-w-[175px] shrink-0">
               <Search className="absolute left-2.5 w-3 h-3 text-slate-400 pointer-events-none" />
               <input
                 type="text"
                 value={organSearchQuery}
                 onChange={(e) => setOrganSearchQuery(e.target.value)}
                 placeholder={lang === 'hi' ? 'अंग खोजें...' : 'Search organ...'}
-                className="w-full pl-7 pr-2 py-1 rounded-lg text-xs bg-slate-900/90 border border-slate-700 text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                className="w-full pl-7 pr-7 py-1 rounded-lg text-xs bg-slate-900/90 border border-slate-700 text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
               />
+              <button
+                type="button"
+                onClick={startVoiceSearch}
+                title="Voice Search (Speak Organ Name)"
+                className={`absolute right-1.5 p-0.5 rounded transition-colors ${
+                  isListening ? 'text-red-400 animate-pulse' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              </button>
             </div>
 
             <button
@@ -2413,6 +2778,40 @@ export function AnatomyViewer({
                 </button>
               );
             })}
+          </div>
+
+          {/* Quick Anatomical Presets / Bookmarks */}
+          <div className="absolute top-12 left-4 z-10 hidden sm:flex items-center gap-1 bg-slate-900/85 backdrop-blur-md px-2 py-1 rounded-xl border border-slate-800 pointer-events-auto">
+            <Bookmark className="w-3 h-3 text-cyan-400" />
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-1">Presets:</span>
+            {ANATOMICAL_BOOKMARKS.map((bm) => (
+              <button
+                key={bm.id}
+                onClick={bm.apply}
+                className={`px-2 py-0.5 rounded-lg text-[9px] font-bold transition-all ${
+                  activeBookmark === bm.id
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                {lang === 'hi' ? bm.nameHi : bm.nameEn}
+              </button>
+            ))}
+          </div>
+
+          {/* Interactive 2D Anatomical Mini-Map (Top Right Corner HUD) */}
+          <div className="absolute top-12 right-4 z-10 pointer-events-auto hidden sm:block">
+            <AnatomyMiniMap
+              currentOrgan={currentOrgan}
+              cameraAngle={cameraAngle}
+              onSelectAngle={(ang) => {
+                setCurrentOrgan(null);
+                setCameraAngle(ang);
+              }}
+              onSelectOrgan={handleSelectOrgan}
+              lang={lang}
+              isCompact={isMobile}
+            />
           </div>
 
           {/* Corner HUD Bounding Brackets from Reference Matrix (CAM 04 / INSPECTED) */}
@@ -2589,9 +2988,12 @@ export function AnatomyViewer({
             />
           ) : (
             <Canvas
-              dpr={[1, 1.75]}
+              dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 1.75)]}
               performance={{ min: 0.5 }}
-              camera={{ position: [0, isMobile ? 1.10 : 1.25, isMobile ? 4.3 : 3.2], fov: isMobile ? 50 : 45 }}
+              camera={{
+                position: [0, (isMobile ? 1.05 : 1.25) + (isMobile && mobileSheetSnap === 'peek' ? 0.35 : 0), typeof window !== 'undefined' && window.innerWidth < 450 ? 5.1 : isMobile ? 4.4 : 3.2],
+                fov: typeof window !== 'undefined' && window.innerWidth < 450 ? 54 : isMobile ? 50 : 45,
+              }}
               gl={{
                 antialias: true,
                 alpha: true,
@@ -2614,14 +3016,260 @@ export function AnatomyViewer({
                 isolateMode={isolateMode}
                 lang={lang}
                 onUnzoom={() => handleSelectOrgan(null)}
+                isScannerWaveActive={isScannerWaveActive}
+                isLoupeActive={isLoupeActive}
               />
             </Canvas>
+          )}
+
+          {/* Floating Exit Immersive Mode Button */}
+          {isImmersiveMode && (
+            <button
+              onClick={() => setIsImmersiveMode(false)}
+              className="absolute top-4 right-4 z-40 px-3 py-1.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-white border border-white/20 shadow-2xl flex items-center gap-1.5 text-xs font-bold backdrop-blur-xl transition-all pointer-events-auto"
+            >
+              <Minimize className="w-3.5 h-3.5 text-purple-400" />
+              <span>Exit Immersive View</span>
+            </button>
+          )}
+
+          {/* Apple Vision Pro Floating Thumb Action Island */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl pointer-events-auto max-w-[94vw] overflow-x-auto">
+            {/* Continuous X-Ray Toggle / Popover */}
+            <button
+              onClick={() => setShowXraySliderPopup(!showXraySliderPopup)}
+              className={`px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 text-xs transition-all shrink-0 ${
+                showXraySliderPopup
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'bg-slate-800/80 text-cyan-300 hover:bg-slate-700'
+              }`}
+              title="Continuous Layer X-Ray Depth Slider"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden xs:inline">X-Ray {xrayDepth}%</span>
+            </button>
+
+            {/* Guided 3D Tour Trigger */}
+            <button
+              onClick={() => setIsTourOpen(true)}
+              className="px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 text-xs bg-slate-800/80 text-emerald-300 hover:bg-slate-700 transition-all shrink-0"
+              title="Guided 3D Anatomy Tour"
+            >
+              <Compass className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden xs:inline">Tour</span>
+            </button>
+
+            {/* Anatomy Quiz Trigger */}
+            <button
+              onClick={() => setIsQuizOpen(true)}
+              className="px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 text-xs bg-slate-800/80 text-amber-300 hover:bg-slate-700 transition-all shrink-0"
+              title="Interactive Clinical Anatomy Quiz"
+            >
+              <Award className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden xs:inline">Quiz</span>
+            </button>
+
+            {/* GLSL Laser Tomographic Scan Wave Toggle */}
+            <button
+              onClick={() => setIsScannerWaveActive(!isScannerWaveActive)}
+              className={`p-2 rounded-xl border text-xs transition-all shrink-0 ${
+                isScannerWaveActive
+                  ? 'bg-cyan-600 border-cyan-400 text-white shadow-md'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white'
+              }`}
+              title="Toggle MRI/CT Laser Scan Wave"
+            >
+              <Scan className="w-3.5 h-3.5 text-cyan-400" />
+            </button>
+
+            {/* Refraction Loupe Tool Toggle */}
+            <button
+              onClick={() => setIsLoupeActive(!isLoupeActive)}
+              className={`p-2 rounded-xl border text-xs transition-all shrink-0 ${
+                isLoupeActive
+                  ? 'bg-sky-600 border-sky-400 text-white shadow-md'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white'
+              }`}
+              title="Toggle Optical Refraction Diagnostic Loupe"
+            >
+              <Crosshair className="w-3.5 h-3.5 text-sky-400" />
+            </button>
+
+            {/* Fullscreen Immersive Mode Toggle */}
+            <button
+              onClick={() => setIsImmersiveMode(!isImmersiveMode)}
+              className={`p-2 rounded-xl border text-xs transition-all shrink-0 ${
+                isImmersiveMode
+                  ? 'bg-purple-600 border-purple-400 text-white shadow-md'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white'
+              }`}
+              title={isImmersiveMode ? 'Exit Immersive Mode' : 'Enter Immersive Mode'}
+            >
+              {isImmersiveMode ? (
+                <Minimize className="w-3.5 h-3.5 text-purple-300" />
+              ) : (
+                <Maximize className="w-3.5 h-3.5 text-purple-300" />
+              )}
+            </button>
+          </div>
+
+          {/* Floating Continuous X-Ray Slider Popup */}
+          {showXraySliderPopup && (
+            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-30 w-72 rounded-2xl bg-slate-900/95 backdrop-blur-2xl border border-cyan-500/40 p-3 shadow-2xl space-y-2 pointer-events-auto animate-in fade-in slide-in-from-bottom-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-white flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Continuous X-Ray Depth</span>
+                </span>
+                <span className="font-mono text-cyan-400 font-bold">{xrayDepth}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={xrayDepth}
+                onChange={(e) => handleXrayChange(parseInt(e.target.value, 10))}
+                className="w-full h-2 accent-cyan-400 bg-slate-700 rounded-lg cursor-pointer"
+              />
+              <div className="flex justify-between text-[9px] font-mono text-slate-400">
+                <span>SKIN</span>
+                <span>MUSCLE</span>
+                <span>BONE</span>
+                <span>VISCERA</span>
+              </div>
+            </div>
+          )}
+
+          {/* Mobile Vision Pro Collapsible Frosted-Glass Bottom Sheet */}
+          {isMobile && !isImmersiveMode && (
+            <div
+              className={`absolute bottom-0 left-0 right-0 z-30 transition-all duration-300 ease-out bg-slate-950/90 backdrop-blur-2xl border-t border-white/10 rounded-t-3xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto ${
+                mobileSheetSnap === 'collapsed'
+                  ? 'h-14'
+                  : mobileSheetSnap === 'peek'
+                  ? 'h-72'
+                  : 'h-[82vh]'
+              }`}
+            >
+              {/* Drag Handle & Peek Bar */}
+              <div
+                onClick={() => {
+                  setMobileSheetSnap(
+                    mobileSheetSnap === 'collapsed'
+                      ? 'peek'
+                      : mobileSheetSnap === 'peek'
+                      ? 'expanded'
+                      : 'collapsed'
+                  );
+                  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                    navigator.vibrate?.([15]);
+                  }
+                }}
+                className="w-full py-2.5 px-4 flex items-center justify-between cursor-pointer select-none border-b border-slate-800/80 shrink-0 bg-slate-900/60"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-1 rounded-full bg-slate-600" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: activeOrganMeta ? activeOrganMeta.color : '#10b981' }}
+                  />
+                  <span className="text-xs font-bold text-white truncate max-w-[160px]">
+                    {activeOrganMeta
+                      ? lang === 'hi'
+                        ? activeOrganMeta.nameHi
+                        : activeOrganMeta.nameEn
+                      : 'Human Body Atlas'}
+                  </span>
+                  {currentOrgan && highlightedOrgans.has(currentOrgan) && (
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-red-950 text-red-200 border border-red-700 animate-pulse">
+                      Alert
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-mono text-cyan-400">
+                    {mobileSheetSnap === 'collapsed'
+                      ? '▲ Inspect'
+                      : mobileSheetSnap === 'peek'
+                      ? '▲ Full'
+                      : '▼ Minimize'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Scrollable Sheet Content for Peek & Expanded */}
+              {mobileSheetSnap !== 'collapsed' && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-3.5 text-xs text-white">
+                  {activeOrganMeta ? (
+                    <>
+                      <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 leading-relaxed font-medium">
+                        💡 <strong>{lang === 'hi' ? 'संक्षिप्त जानकारी:' : 'Quick Takeaway:'}</strong>{' '}
+                        {lang === 'hi' ? activeOrganMeta.shortInsightHi : activeOrganMeta.shortInsightEn}
+                      </div>
+
+                      {/* Associated Clinical Finding */}
+                      {organRelatedTests.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Patient Lab Results ({organRelatedTests.length})
+                          </span>
+                          {organRelatedTests.map((test) => (
+                            <div
+                              key={test.id}
+                              className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                                test.status === 'high'
+                                  ? 'bg-red-950/50 border-red-800 text-red-200'
+                                  : test.status === 'low'
+                                  ? 'bg-amber-950/50 border-amber-800 text-amber-200'
+                                  : 'bg-emerald-950/50 border-emerald-800 text-emerald-200'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-bold">{test.name}</div>
+                                <div className="text-[10px] opacity-75">Ref: {test.range}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="font-black text-sm">{test.value} {test.unit}</div>
+                                <div className="text-[9px] uppercase font-bold">{test.status}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Ayurveda Correlate Demarcation */}
+                      {currentOrgan && ANATOMICAL_STRUCTURES[currentOrgan] && (
+                        <div className="p-3 rounded-2xl bg-teal-950/40 border border-teal-800/60 space-y-1 text-teal-200">
+                          <div className="flex items-center gap-1.5 font-bold text-teal-300 text-[11px] uppercase tracking-wider">
+                            <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                            <span>Ayurvedic Bio-Energetic Literacy</span>
+                          </div>
+                          <div className="text-[11px]">
+                            <strong>Dosha:</strong> {ANATOMICAL_STRUCTURES[currentOrgan].ayurvedaAssociation.dosha} • <strong>Dhatu:</strong> {ANATOMICAL_STRUCTURES[currentOrgan].ayurvedaAssociation.dhatu}
+                          </div>
+                          <p className="text-[10px] opacity-80 pt-0.5">
+                            Ayurvedic correlates represent traditional wellness balance principles and are complementary to modern clinical diagnostics.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-4 text-slate-400 text-xs">
+                      Tap any organ in 3D to zoom and inspect clinical insights.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
         {/* Right Side: Educational Finding & Organ Inspection HUD (Responsive Mobile/Desktop) */}
-        <div className={`${mobileTab === '3d' ? 'hidden lg:flex' : 'flex'} lg:col-span-4 p-4 sm:p-5 bg-slate-900/95 border-t lg:border-t-0 lg:border-l border-slate-800 flex-col justify-between overflow-y-auto space-y-4`}>
-          {/* Mobile Back Button */}
+        {!isImmersiveMode && (
+          <div className={`${mobileTab === '3d' ? 'hidden lg:flex' : 'flex'} lg:col-span-4 p-4 sm:p-5 bg-slate-900/95 border-t lg:border-t-0 lg:border-l border-slate-800 flex-col justify-between overflow-y-auto space-y-4 flex-1 lg:flex-initial`}>
+            {/* Mobile Back Button */}
           <div className="flex lg:hidden items-center justify-between pb-3 border-b border-slate-800">
             <button
               onClick={() => setMobileTab('3d')}
@@ -2672,7 +3320,76 @@ export function AnatomyViewer({
                   💡 <strong>{lang === 'hi' ? 'संक्षिप्त जानकारी:' : 'Quick Takeaway:'}</strong>{' '}
                   {lang === 'hi' ? activeOrganMeta.shortInsightHi : activeOrganMeta.shortInsightEn}
                 </div>
+
+                {/* Dual Inspector Tab: Clinical Western Anatomy vs Ayurvedic Bio-Energetics */}
+                <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-bold">
+                  <button
+                    onClick={() => setInspectorTab('western')}
+                    className={`flex-1 py-1 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+                      inspectorTab === 'western'
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>Clinical Western</span>
+                  </button>
+                  <button
+                    onClick={() => setInspectorTab('ayurveda')}
+                    className={`flex-1 py-1 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+                      inspectorTab === 'ayurveda'
+                        ? 'bg-teal-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Ayurveda Doshas</span>
+                  </button>
+                </div>
               </div>
+
+              {/* Ayurvedic Bio-Energetics Dedicated Panel */}
+              {inspectorTab === 'ayurveda' && currentOrgan && ANATOMICAL_STRUCTURES[currentOrgan] && (
+                <div className="space-y-3 animate-in fade-in">
+                  <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-800/60 text-xs space-y-2">
+                    <div className="flex items-center justify-between border-b border-teal-900/60 pb-1.5">
+                      <span className="font-bold text-teal-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Traditional Ayurvedic Correlate</span>
+                      </span>
+                      <span className="text-[9px] px-2 py-0.5 rounded bg-teal-900 text-teal-200 font-mono">
+                        WELLNESS LITERACY
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="p-2 rounded-xl bg-slate-900/80 border border-teal-900/40">
+                        <span className="text-slate-400 text-[10px] block">Governing Dosha:</span>
+                        <strong className="text-teal-300 text-xs">
+                          {ANATOMICAL_STRUCTURES[currentOrgan].ayurvedaAssociation.dosha}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded-xl bg-slate-900/80 border border-teal-900/40">
+                        <span className="text-slate-400 text-[10px] block">Associated Dhatu:</span>
+                        <strong className="text-teal-300 text-xs">
+                          {ANATOMICAL_STRUCTURES[currentOrgan].ayurvedaAssociation.dhatu}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-teal-100/90 leading-relaxed pt-1">
+                      In classical Ayurveda, <strong>{activeOrganMeta.nameHi}</strong> is evaluated through the balance of Agni (digestive/metabolic transformation) and Srotas (micro-channels). Harmonizing {ANATOMICAL_STRUCTURES[currentOrgan].ayurvedaAssociation.dosha} supports vital Ojas and tissue cellular longevity.
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-teal-950/80 border border-teal-700/40 text-[10px] text-teal-200/90 flex items-start gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-teal-400 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Scientific Demarcation:</strong> Ayurvedic correlates provide lifestyle and holistic perspective. They do not replace blood tests, imaging, or allopathic clinical diagnoses.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Associated Clinical Finding vs AI Educational Separation */}
               {organRelatedTests.length > 0 ? (
@@ -2966,6 +3683,7 @@ export function AnatomyViewer({
             <span>Educational visualization only. Not a clinical diagnosis.</span>
           </div>
         </div>
+      )}
       </div>
 
       {/* Attribution & Specs Modal */}
@@ -3017,6 +3735,37 @@ export function AnatomyViewer({
         isOpen={showDeepAnatomy}
         onClose={() => setShowDeepAnatomy(false)}
         onSelectOrgan={(k) => handleSelectOrgan(k)}
+      />
+
+      {/* Guided 3D Anatomy Tour Modal */}
+      <GuidedTourModal
+        isOpen={isTourOpen}
+        onClose={() => setIsTourOpen(false)}
+        onSelectOrgan={handleSelectOrgan}
+        onSelectAngle={setCameraAngle}
+        lang={lang}
+      />
+
+      {/* Interactive Anatomy Quiz Modal */}
+      <AnatomyQuizModal
+        isOpen={isQuizOpen}
+        onClose={() => setIsQuizOpen(false)}
+        onSelectOrgan={(k) => handleSelectOrgan(k)}
+        lang={lang}
+      />
+
+      {/* Quick OCR Medical Report Scan Modal */}
+      <QuickScanModal
+        isOpen={isQuickScanOpen}
+        onClose={() => setIsQuickScanOpen(false)}
+        onApplyReport={(rows, title) => {
+          setInternalReportRows(rows);
+          if (title) setScannedReportTitle(title);
+          const firstAbnormal = rows.find((r) => r.status === 'high' || r.status === 'low');
+          if (firstAbnormal && firstAbnormal.organ) {
+            handleSelectOrgan(firstAbnormal.organ);
+          }
+        }}
       />
     </div>
   );

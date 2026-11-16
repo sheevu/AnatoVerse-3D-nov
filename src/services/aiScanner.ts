@@ -32,28 +32,44 @@ const CLINICAL_KNOWLEDGE_BASE: Record<string, ClinicalRef> = {
   // Glycemic / Pancreas
   'fasting blood glucose': { name: 'Fasting Blood Glucose', unit: 'mg/dL', range: '70 - 99', organ: 'pancreas' },
   'glucose fasting': { name: 'Fasting Blood Glucose', unit: 'mg/dL', range: '70 - 99', organ: 'pancreas' },
+  'fbs': { name: 'Fasting Blood Sugar (FBS)', unit: 'mg/dL', range: '70 - 99', organ: 'pancreas' },
   'postprandial glucose': { name: 'Postprandial Blood Glucose', unit: 'mg/dL', range: '< 140', organ: 'pancreas' },
+  'ppbs': { name: 'Post Prandial Blood Sugar (PPBS)', unit: 'mg/dL', range: '< 140', organ: 'pancreas' },
   'blood sugar': { name: 'Blood Sugar (Random)', unit: 'mg/dL', range: '70 - 140', organ: 'pancreas' },
+  'rbs': { name: 'Random Blood Sugar', unit: 'mg/dL', range: '70 - 140', organ: 'pancreas' },
   'hba1c': { name: 'HbA1c (Glycated Hemoglobin)', unit: '%', range: '< 5.7', organ: 'pancreas' },
   'serum insulin': { name: 'Fasting Serum Insulin', unit: 'μIU/mL', range: '2.6 - 24.9', organ: 'pancreas' },
+  'c-peptide': { name: 'C-Peptide', unit: 'ng/mL', range: '0.8 - 3.1', organ: 'pancreas' },
+  'amylase': { name: 'Serum Amylase', unit: 'U/L', range: '28 - 100', organ: 'pancreas' },
+  'lipase': { name: 'Serum Lipase', unit: 'U/L', range: '13 - 60', organ: 'pancreas' },
 
-  // Lipid / Cardiovascular
+  // Lipid / Cardiovascular / Heart
   'total cholesterol': { name: 'Total Cholesterol', unit: 'mg/dL', range: '< 200', organ: 'heart' },
   'cholesterol': { name: 'Total Cholesterol', unit: 'mg/dL', range: '< 200', organ: 'heart' },
   'ldl cholesterol': { name: 'LDL Cholesterol', unit: 'mg/dL', range: '< 100', organ: 'heart' },
+  'ldl': { name: 'LDL Cholesterol', unit: 'mg/dL', range: '< 100', organ: 'heart' },
   'hdl cholesterol': { name: 'HDL Cholesterol', unit: 'mg/dL', range: '> 40', organ: 'heart' },
+  'hdl': { name: 'HDL Cholesterol', unit: 'mg/dL', range: '> 40', organ: 'heart' },
   'triglycerides': { name: 'Serum Triglycerides', unit: 'mg/dL', range: '< 150', organ: 'heart' },
   'vldl cholesterol': { name: 'VLDL Cholesterol', unit: 'mg/dL', range: '5 - 30', organ: 'heart' },
+  'vldl': { name: 'VLDL Cholesterol', unit: 'mg/dL', range: '5 - 30', organ: 'heart' },
+  'non-hdl': { name: 'Non-HDL Cholesterol', unit: 'mg/dL', range: '< 130', organ: 'heart' },
   'troponin': { name: 'Troponin-I', unit: 'ng/mL', range: '< 0.04', organ: 'heart' },
+  'troponin-i': { name: 'Troponin-I', unit: 'ng/mL', range: '< 0.04', organ: 'heart' },
   'hs-crp': { name: 'High-Sensitivity CRP', unit: 'mg/L', range: '< 1.0', organ: 'heart' },
+  'ck-mb': { name: 'CK-MB (Cardiac)', unit: 'ng/mL', range: '< 5.0', organ: 'heart' },
+  'bnp': { name: 'B-Type Natriuretic Peptide (BNP)', unit: 'pg/mL', range: '< 100', organ: 'heart' },
+  'homocysteine': { name: 'Serum Homocysteine', unit: 'μmol/L', range: '5.0 - 15.0', organ: 'heart' },
 
   // Renal / Kidneys
   'serum creatinine': { name: 'Serum Creatinine', unit: 'mg/dL', range: '0.7 - 1.3', organ: 'kidneys' },
   'creatinine': { name: 'Serum Creatinine', unit: 'mg/dL', range: '0.7 - 1.3', organ: 'kidneys' },
   'blood urea nitrogen': { name: 'Blood Urea Nitrogen (BUN)', unit: 'mg/dL', range: '7 - 20', organ: 'kidneys' },
+  'bun': { name: 'BUN (Blood Urea Nitrogen)', unit: 'mg/dL', range: '7 - 20', organ: 'kidneys' },
   'urea': { name: 'Blood Urea', unit: 'mg/dL', range: '15 - 40', organ: 'kidneys' },
   'uric acid': { name: 'Serum Uric Acid', unit: 'mg/dL', range: '3.5 - 7.2', organ: 'kidneys' },
   'egfr': { name: 'Estimated GFR (eGFR)', unit: 'mL/min/1.73m²', range: '> 90', organ: 'kidneys' },
+  'microalbumin': { name: 'Urine Microalbumin', unit: 'mg/L', range: '< 20', organ: 'kidneys' },
 
   // Hepatic / Liver
   'sgpt': { name: 'SGPT / ALT', unit: 'U/L', range: '7 - 56', organ: 'liver' },
@@ -62,25 +78,118 @@ const CLINICAL_KNOWLEDGE_BASE: Record<string, ClinicalRef> = {
   'ast': { name: 'SGOT / AST', unit: 'U/L', range: '10 - 40', organ: 'liver' },
   'total bilirubin': { name: 'Total Bilirubin', unit: 'mg/dL', range: '0.2 - 1.2', organ: 'liver' },
   'direct bilirubin': { name: 'Direct Bilirubin', unit: 'mg/dL', range: '0.0 - 0.3', organ: 'liver' },
+  'indirect bilirubin': { name: 'Indirect Bilirubin', unit: 'mg/dL', range: '0.2 - 0.8', organ: 'liver' },
   'alkaline phosphatase': { name: 'Alkaline Phosphatase (ALP)', unit: 'U/L', range: '44 - 147', organ: 'liver' },
   'alp': { name: 'Alkaline Phosphatase (ALP)', unit: 'U/L', range: '44 - 147', organ: 'liver' },
+  'ggt': { name: 'Gamma GT (GGT)', unit: 'U/L', range: '9 - 48', organ: 'liver' },
   'serum albumin': { name: 'Serum Albumin', unit: 'g/dL', range: '3.4 - 5.4', organ: 'liver' },
+  'albumin': { name: 'Serum Albumin', unit: 'g/dL', range: '3.4 - 5.4', organ: 'liver' },
+  'total protein': { name: 'Total Protein', unit: 'g/dL', range: '6.0 - 8.3', organ: 'liver' },
+  'globulin': { name: 'Serum Globulin', unit: 'g/dL', range: '2.0 - 3.5', organ: 'liver' },
 
   // Hematology / Lungs / Oxygenation
   'hemoglobin': { name: 'Hemoglobin (Hb)', unit: 'g/dL', range: '12.0 - 16.5', organ: 'lungs' },
+  'hb': { name: 'Hemoglobin (Hb)', unit: 'g/dL', range: '12.0 - 16.5', organ: 'lungs' },
   'rbc': { name: 'Red Blood Cell Count (RBC)', unit: 'mil/μL', range: '4.2 - 5.8', organ: 'lungs' },
   'wbc': { name: 'Total Leukocyte Count (WBC)', unit: 'cells/μL', range: '4000 - 11000', organ: 'lungs' },
+  'tlc': { name: 'Total Leukocyte Count (TLC)', unit: 'cells/μL', range: '4000 - 11000', organ: 'lungs' },
   'platelets': { name: 'Platelet Count', unit: 'lakh/μL', range: '1.5 - 4.5', organ: 'lungs' },
+  'platelet count': { name: 'Platelet Count', unit: 'lakh/μL', range: '1.5 - 4.5', organ: 'lungs' },
   'hematocrit': { name: 'Hematocrit (PCV)', unit: '%', range: '36 - 50', organ: 'lungs' },
+  'pcv': { name: 'Hematocrit (PCV)', unit: '%', range: '36 - 50', organ: 'lungs' },
+  'mcv': { name: 'Mean Corpuscular Volume (MCV)', unit: 'fL', range: '80 - 100', organ: 'lungs' },
+  'mch': { name: 'Mean Corpuscular Hb (MCH)', unit: 'pg', range: '27 - 33', organ: 'lungs' },
+  'mchc': { name: 'MCHC', unit: 'g/dL', range: '32 - 36', organ: 'lungs' },
+  'neutrophils': { name: 'Absolute Neutrophil Count', unit: '%', range: '40 - 70', organ: 'lungs' },
+  'lymphocytes': { name: 'Lymphocyte Count', unit: '%', range: '20 - 40', organ: 'lungs' },
+  'eosinophils': { name: 'Eosinophil Count', unit: '%', range: '1 - 6', organ: 'lungs' },
+  'ferritin': { name: 'Serum Ferritin', unit: 'ng/mL', range: '20 - 250', organ: 'lungs' },
   'esr': { name: 'ESR (Erythrocyte Sed. Rate)', unit: 'mm/hr', range: '0 - 20', organ: 'intestines' },
+  'crp': { name: 'C-Reactive Protein (CRP)', unit: 'mg/L', range: '< 5.0', organ: 'intestines' },
 
   // Neuro-Endocrine / Brain
   'tsh': { name: 'TSH (Thyroid Stimulating Hormone)', unit: 'μIU/mL', range: '0.4 - 4.2', organ: 'brain' },
+  'free t3': { name: 'Free Triiodothyronine (FT3)', unit: 'pg/mL', range: '2.0 - 4.4', organ: 'brain' },
+  'free t4': { name: 'Free Thyroxine (FT4)', unit: 'ng/dL', range: '0.8 - 1.8', organ: 'brain' },
   'vitamin b12': { name: 'Serum Vitamin B12', unit: 'pg/mL', range: '200 - 900', organ: 'brain' },
+  'b12': { name: 'Serum Vitamin B12', unit: 'pg/mL', range: '200 - 900', organ: 'brain' },
+  'vitamin d': { name: 'Vitamin D (25-OH)', unit: 'ng/mL', range: '30 - 100', organ: 'brain' },
   'serum sodium': { name: 'Serum Sodium (Na+)', unit: 'mEq/L', range: '135 - 145', organ: 'brain' },
+  'sodium': { name: 'Serum Sodium (Na+)', unit: 'mEq/L', range: '135 - 145', organ: 'brain' },
   'serum potassium': { name: 'Serum Potassium (K+)', unit: 'mEq/L', range: '3.5 - 5.1', organ: 'brain' },
+  'potassium': { name: 'Serum Potassium (K+)', unit: 'mEq/L', range: '3.5 - 5.1', organ: 'brain' },
   'calcium': { name: 'Serum Calcium', unit: 'mg/dL', range: '8.5 - 10.2', organ: 'brain' },
+  'chloride': { name: 'Serum Chloride', unit: 'mEq/L', range: '96 - 106', organ: 'brain' },
+
+  // Gastric / Stomach
+  'h. pylori': { name: 'H. Pylori Antigen', unit: '', range: 'Negative', organ: 'stomach' },
+  'h pylori': { name: 'H. Pylori Antigen', unit: '', range: 'Negative', organ: 'stomach' },
 };
+
+/**
+ * Intelligent Image Preprocessor for OCR
+ * Enhances contrast, converts to grayscale, and rescales photographed reports
+ */
+async function preprocessImageForOCR(fileOrUrl: File | Blob | string | HTMLCanvasElement): Promise<string> {
+  if (fileOrUrl instanceof HTMLCanvasElement) {
+    return fileOrUrl.toDataURL('image/png');
+  }
+  if (typeof window === 'undefined') return typeof fileOrUrl === 'string' ? fileOrUrl : '';
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 2000;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(typeof fileOrUrl === 'string' ? fileOrUrl : URL.createObjectURL(fileOrUrl));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Binarize / contrast stretch for document readability
+        const imgData = ctx.getImageData(0, 0, width, height);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          // High contrast stretch
+          const adjusted = gray > 140 ? 255 : gray < 100 ? 0 : (gray - 100) * 6.3;
+          d[i] = adjusted;
+          d[i + 1] = adjusted;
+          d[i + 2] = adjusted;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(typeof fileOrUrl === 'string' ? fileOrUrl : URL.createObjectURL(fileOrUrl));
+      }
+    };
+    img.onerror = () => {
+      resolve(typeof fileOrUrl === 'string' ? fileOrUrl : URL.createObjectURL(fileOrUrl));
+    };
+    if (typeof fileOrUrl === 'string') {
+      img.src = fileOrUrl;
+    } else {
+      img.src = URL.createObjectURL(fileOrUrl);
+    }
+  });
+}
 
 /**
  * Perform Client-Side OCR on image file or blob or canvas
@@ -89,12 +198,12 @@ export async function ocrImage(
   fileOrUrl: File | Blob | string | HTMLCanvasElement,
   onProgress?: (status: string) => void
 ): Promise<string> {
-  onProgress?.('Initializing Optical Character Recognition (OCR)...');
+  onProgress?.('Enhancing image contrast & initializing OCR engine...');
   try {
+    const processedTarget = await preprocessImageForOCR(fileOrUrl);
     const worker = await createWorker('eng');
-    onProgress?.('Scanning image with neural OCR engine...');
-    const imageTarget = fileOrUrl instanceof HTMLCanvasElement ? fileOrUrl.toDataURL('image/png') : fileOrUrl;
-    const ret = await worker.recognize(imageTarget);
+    onProgress?.('Scanning document text with deep neural OCR...');
+    const ret = await worker.recognize(processedTarget);
     await worker.terminate();
     return ret.data.text || '';
   } catch (err) {
